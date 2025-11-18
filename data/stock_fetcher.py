@@ -218,44 +218,175 @@ class StockFetcher:
         stocks = []
         existing_symbols = set()
 
-        # Method 1: BSE Equity List API
-        print("\nMethod 1: BSE Equity List API")
+        # Method 1: BSE Bhav Copy CSV (most reliable)
+        print("\nMethod 1: BSE Equity Bhav Copy")
         try:
-            url = "https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w"
-            params = {
-                'Group': '',
-                'Atea': '',
-                'Status': 'Active'
-            }
+            # Get yesterday's date for bhav copy
+            from datetime import datetime, timedelta
+            today = datetime.now()
 
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'application/json',
-                'Referer': 'https://www.bseindia.com/',
-                'Origin': 'https://www.bseindia.com'
-            }
+            # Try last few days to find a valid bhav copy
+            for days_back in range(1, 10):
+                check_date = today - timedelta(days=days_back)
+                date_str = check_date.strftime('%d%m%y')
 
-            response = self.session.get(url, params=params, headers=headers, timeout=60)
+                url = f"https://www.bseindia.com/download/BhsrAll/Equity/EQ{date_str}_CSV.ZIP"
 
-            if response.status_code == 200:
-                data = response.json()
-                if isinstance(data, list):
-                    for item in data:
-                        scrip_cd = str(item.get('scrip_cd', '')).strip()
-                        if scrip_cd and scrip_cd not in existing_symbols:
-                            # Use BSE scrip code as symbol
-                            stocks.append({
-                                'symbol': scrip_cd,
-                                'name': str(item.get('scrip_nm', scrip_cd)).strip(),
-                                'exchange': 'BSE',
-                                'sector': str(item.get('group', '')).strip(),
-                                'industry': str(item.get('industry', '')).strip()
-                            })
-                            existing_symbols.add(scrip_cd)
+                try:
+                    response = self.session.get(url, timeout=30)
+                    if response.status_code == 200 and len(response.content) > 1000:
+                        # Extract and parse the CSV from ZIP
+                        import zipfile
+                        from io import BytesIO
 
-                    print(f"  -> Found {len(stocks)} stocks")
+                        with zipfile.ZipFile(BytesIO(response.content)) as z:
+                            for filename in z.namelist():
+                                if filename.endswith('.CSV') or filename.endswith('.csv'):
+                                    with z.open(filename) as f:
+                                        df = pd.read_csv(f)
+
+                                        # Common column names in BSE bhav copy
+                                        code_col = None
+                                        name_col = None
+
+                                        for col in df.columns:
+                                            col_upper = col.upper().strip()
+                                            if 'SC_CODE' in col_upper or 'SCRIP' in col_upper and 'CODE' in col_upper:
+                                                code_col = col
+                                            elif 'SC_NAME' in col_upper or 'SCRIP' in col_upper and 'NAME' in col_upper:
+                                                name_col = col
+
+                                        if code_col:
+                                            for _, row in df.iterrows():
+                                                scrip_cd = str(row.get(code_col, '')).strip()
+                                                if scrip_cd and scrip_cd.isdigit() and scrip_cd not in existing_symbols:
+                                                    name = str(row.get(name_col, scrip_cd)).strip() if name_col else scrip_cd
+                                                    stocks.append({
+                                                        'symbol': scrip_cd,
+                                                        'name': name,
+                                                        'exchange': 'BSE',
+                                                        'sector': '',
+                                                        'industry': ''
+                                                    })
+                                                    existing_symbols.add(scrip_cd)
+                                        break
+
+                        if stocks:
+                            print(f"  -> Found {len(stocks)} stocks from {check_date.strftime('%Y-%m-%d')}")
+                            break
+                except Exception as inner_e:
+                    continue
+
         except Exception as e:
             print(f"  -> Failed: {e}")
+
+        # Method 2: Try direct equity list from BSE downloads
+        if len(stocks) < 100:
+            print("\nMethod 2: BSE Equity List Download")
+            try:
+                url = "https://www.bseindia.com/corporates/List_Scrips.aspx"
+
+                # First get the page to extract form data
+                response = self.session.get(url, timeout=30)
+
+                if response.status_code == 200:
+                    # Try to download the excel/csv directly
+                    download_url = "https://www.bseindia.com/corporates/download/Equity.csv"
+                    dl_response = self.session.get(download_url, timeout=60)
+
+                    if dl_response.status_code == 200:
+                        try:
+                            df = pd.read_csv(io.StringIO(dl_response.text))
+                            count = 0
+
+                            for col in df.columns:
+                                if 'Security Code' in col or 'Scrip Code' in col:
+                                    code_col = col
+                                    break
+                            else:
+                                code_col = df.columns[0] if len(df.columns) > 0 else None
+
+                            if code_col:
+                                name_col = df.columns[1] if len(df.columns) > 1 else None
+
+                                for _, row in df.iterrows():
+                                    scrip_cd = str(row.get(code_col, '')).strip()
+                                    if scrip_cd and scrip_cd not in existing_symbols:
+                                        name = str(row.get(name_col, scrip_cd)).strip() if name_col else scrip_cd
+                                        stocks.append({
+                                            'symbol': scrip_cd,
+                                            'name': name,
+                                            'exchange': 'BSE',
+                                            'sector': '',
+                                            'industry': ''
+                                        })
+                                        existing_symbols.add(scrip_cd)
+                                        count += 1
+
+                                if count > 0:
+                                    print(f"  -> Added {count} stocks")
+                        except:
+                            pass
+            except Exception as e:
+                print(f"  -> Failed: {e}")
+
+        # Method 3: BSE API with browser-like session
+        if len(stocks) < 100:
+            print("\nMethod 3: BSE API with enhanced headers")
+            try:
+                # Create a new session with browser-like behavior
+                bse_session = requests.Session()
+
+                # First visit the main page to get cookies
+                bse_session.get("https://www.bseindia.com/", timeout=10)
+                time.sleep(1)
+
+                url = "https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w"
+                params = {
+                    'Group': '',
+                    'Atea': '',
+                    'Status': 'Active'
+                }
+
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Referer': 'https://www.bseindia.com/',
+                    'Origin': 'https://www.bseindia.com',
+                    'Connection': 'keep-alive',
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'same-site',
+                }
+
+                response = bse_session.get(url, params=params, headers=headers, timeout=60)
+
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                        if isinstance(data, list):
+                            count = 0
+                            for item in data:
+                                scrip_cd = str(item.get('scrip_cd', '')).strip()
+                                if scrip_cd and scrip_cd not in existing_symbols:
+                                    stocks.append({
+                                        'symbol': scrip_cd,
+                                        'name': str(item.get('scrip_nm', scrip_cd)).strip(),
+                                        'exchange': 'BSE',
+                                        'sector': str(item.get('group', '')).strip(),
+                                        'industry': str(item.get('industry', '')).strip()
+                                    })
+                                    existing_symbols.add(scrip_cd)
+                                    count += 1
+
+                            if count > 0:
+                                print(f"  -> Added {count} stocks")
+                    except:
+                        pass
+            except Exception as e:
+                print(f"  -> Failed: {e}")
 
         # Method 2: BSE Group-wise fetching
         print("\nMethod 2: BSE Group-wise Fetching")
