@@ -8,6 +8,8 @@ import sys
 from datetime import datetime, date, timedelta
 import threading
 import json
+from functools import lru_cache
+import time
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -31,14 +33,57 @@ indicator_calc = IndicatorCalculator()
 circuit_detector = CircuitDetector()
 predictor = CircuitPredictor()
 
-# Global state for background tasks
-task_status = {
-    'running': False,
-    'current_task': None,
-    'progress': 0,
-    'message': '',
-    'results': None
-}
+# Thread-safe task status with lock
+class TaskStatus:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._status = {
+            'running': False,
+            'current_task': None,
+            'progress': 0,
+            'message': '',
+            'results': None
+        }
+
+    def get(self):
+        with self._lock:
+            return self._status.copy()
+
+    def update(self, **kwargs):
+        with self._lock:
+            self._status.update(kwargs)
+
+    def __getitem__(self, key):
+        with self._lock:
+            return self._status[key]
+
+    def __setitem__(self, key, value):
+        with self._lock:
+            self._status[key] = value
+
+task_status = TaskStatus()
+
+# Simple cache with TTL
+class SimpleCache:
+    def __init__(self):
+        self._cache = {}
+        self._timestamps = {}
+
+    def get(self, key, ttl=60):
+        if key in self._cache:
+            if time.time() - self._timestamps[key] < ttl:
+                return self._cache[key]
+        return None
+
+    def set(self, key, value):
+        self._cache[key] = value
+        self._timestamps[key] = time.time()
+
+    def clear(self):
+        self._cache.clear()
+        self._timestamps.clear()
+
+cache = SimpleCache()
 
 
 # Helper functions
@@ -72,28 +117,44 @@ app.jinja_env.filters['format_date'] = format_date
 @app.route('/')
 def index():
     """Dashboard - Main landing page"""
-    # Get statistics
-    nse_count = db.get_stock_count(exchange='NSE')
-    bse_count = db.get_stock_count(exchange='BSE')
-    total_count = db.get_stock_count()
+    # Get statistics with caching
+    nse_count = cache.get('nse_count', ttl=300)
+    if nse_count is None:
+        nse_count = db.get_stock_count(exchange='NSE')
+        cache.set('nse_count', nse_count)
+
+    bse_count = cache.get('bse_count', ttl=300)
+    if bse_count is None:
+        bse_count = db.get_stock_count(exchange='BSE')
+        cache.set('bse_count', bse_count)
+
+    total_count = nse_count + bse_count
 
     # Get today's circuits
     today_uc = db.get_today_circuits(event_type='UC')
     today_lc = db.get_today_circuits(event_type='LC')
 
-    # Get download stats
-    download_stats = db.get_download_stats()
+    # Get download stats with caching
+    download_stats = cache.get('download_stats', ttl=300)
+    if download_stats is None:
+        download_stats = db.get_download_stats()
+        cache.set('download_stats', download_stats)
 
-    # Get circuit statistics
-    circuit_stats = circuit_detector.get_circuit_statistics()
+    # Get circuit statistics with caching
+    circuit_stats = cache.get('circuit_stats', ttl=300)
+    if circuit_stats is None:
+        circuit_stats = circuit_detector.get_circuit_statistics()
+        cache.set('circuit_stats', circuit_stats)
 
-    # Get top UC candidates
-    top_candidates = []
-    try:
-        candidates = predictor.screen_for_uc(min_probability=30)[:10]
-        top_candidates = candidates
-    except:
-        pass
+    # Get top UC candidates with caching
+    top_candidates = cache.get('top_candidates', ttl=120)
+    if top_candidates is None:
+        try:
+            candidates = predictor.screen_for_uc(min_probability=30)[:10]
+            top_candidates = candidates
+            cache.set('top_candidates', top_candidates)
+        except:
+            top_candidates = []
 
     return render_template('dashboard.html',
                            nse_count=nse_count,
@@ -211,7 +272,7 @@ def data_management():
                            nse_count=nse_count,
                            bse_count=bse_count,
                            download_stats=download_stats,
-                           task_status=task_status)
+                           task_status=task_status.get())
 
 
 @app.route('/search')
@@ -229,7 +290,7 @@ def search():
 @app.route('/api/task/status')
 def get_task_status():
     """Get current task status"""
-    return jsonify(task_status)
+    return jsonify(task_status.get())
 
 
 @app.route('/api/fetch-stocks', methods=['POST'])
@@ -239,22 +300,27 @@ def fetch_stocks():
         return jsonify({'error': 'A task is already running'}), 400
 
     def run_task():
-        task_status['running'] = True
-        task_status['current_task'] = 'Fetching stock lists'
-        task_status['progress'] = 0
-        task_status['message'] = 'Fetching NSE stocks...'
+        task_status.update(
+            running=True,
+            current_task='Fetching stock lists',
+            progress=0,
+            message='Fetching NSE and BSE stocks...'
+        )
 
         try:
             results = stock_fetcher.fetch_and_save_all()
-            task_status['results'] = results
-            task_status['message'] = f"Fetched {results['total']} stocks"
+            task_status.update(
+                results=results,
+                message=f"Fetched {results['total']} stocks (NSE: {results['nse']}, BSE: {results['bse']})"
+            )
+            # Clear cache to refresh counts
+            cache.clear()
         except Exception as e:
             task_status['message'] = f"Error: {str(e)}"
         finally:
-            task_status['running'] = False
-            task_status['progress'] = 100
+            task_status.update(running=False, progress=100)
 
-    thread = threading.Thread(target=run_task)
+    thread = threading.Thread(target=run_task, daemon=True)
     thread.start()
 
     return jsonify({'status': 'started'})
@@ -266,32 +332,38 @@ def download_data():
     if task_status['running']:
         return jsonify({'error': 'A task is already running'}), 400
 
-    exchange = request.json.get('exchange', None)
+    exchange = request.json.get('exchange', None) if request.json else None
 
     def run_task():
-        task_status['running'] = True
-        task_status['current_task'] = 'Downloading OHLCV data'
-        task_status['progress'] = 0
-        task_status['message'] = 'Starting download...'
+        task_status.update(
+            running=True,
+            current_task='Downloading OHLCV data',
+            progress=0,
+            message='Starting download...'
+        )
 
         def progress_callback(info):
-            task_status['progress'] = int(info['current'] / info['total'] * 100)
-            task_status['message'] = f"Downloading {info['symbol']} ({info['current']}/{info['total']})"
+            task_status.update(
+                progress=int(info['current'] / info['total'] * 100),
+                message=f"Downloading {info['symbol']} ({info['current']}/{info['total']})"
+            )
 
         try:
             results = ohlcv_downloader.download_all_stocks(
                 exchange=exchange,
                 progress_callback=progress_callback
             )
-            task_status['results'] = results
-            task_status['message'] = f"Downloaded data for {results['success']} stocks"
+            task_status.update(
+                results=results,
+                message=f"Downloaded data for {results['success']} stocks ({results.get('failed', 0)} failed)"
+            )
+            cache.clear()
         except Exception as e:
             task_status['message'] = f"Error: {str(e)}"
         finally:
-            task_status['running'] = False
-            task_status['progress'] = 100
+            task_status.update(running=False, progress=100)
 
-    thread = threading.Thread(target=run_task)
+    thread = threading.Thread(target=run_task, daemon=True)
     thread.start()
 
     return jsonify({'status': 'started'})
@@ -304,22 +376,26 @@ def calculate_indicators():
         return jsonify({'error': 'A task is already running'}), 400
 
     def run_task():
-        task_status['running'] = True
-        task_status['current_task'] = 'Calculating indicators'
-        task_status['progress'] = 0
-        task_status['message'] = 'Calculating indicators...'
+        task_status.update(
+            running=True,
+            current_task='Calculating indicators',
+            progress=0,
+            message='Calculating technical indicators...'
+        )
 
         try:
             results = indicator_calc.calculate_for_all_stocks()
-            task_status['results'] = results
-            task_status['message'] = f"Calculated indicators for {results['success']} stocks"
+            task_status.update(
+                results=results,
+                message=f"Calculated indicators for {results['success']} stocks"
+            )
+            cache.clear()
         except Exception as e:
             task_status['message'] = f"Error: {str(e)}"
         finally:
-            task_status['running'] = False
-            task_status['progress'] = 100
+            task_status.update(running=False, progress=100)
 
-    thread = threading.Thread(target=run_task)
+    thread = threading.Thread(target=run_task, daemon=True)
     thread.start()
 
     return jsonify({'status': 'started'})
@@ -332,22 +408,26 @@ def detect_circuits():
         return jsonify({'error': 'A task is already running'}), 400
 
     def run_task():
-        task_status['running'] = True
-        task_status['current_task'] = 'Detecting circuits'
-        task_status['progress'] = 0
-        task_status['message'] = 'Detecting circuits...'
+        task_status.update(
+            running=True,
+            current_task='Detecting circuits',
+            progress=0,
+            message='Detecting UC/LC circuits...'
+        )
 
         try:
             results = circuit_detector.detect_for_all_stocks()
-            task_status['results'] = results
-            task_status['message'] = f"Found {results['total_uc']} UC and {results['total_lc']} LC events"
+            task_status.update(
+                results=results,
+                message=f"Found {results['total_uc']} UC and {results['total_lc']} LC events"
+            )
+            cache.clear()
         except Exception as e:
             task_status['message'] = f"Error: {str(e)}"
         finally:
-            task_status['running'] = False
-            task_status['progress'] = 100
+            task_status.update(running=False, progress=100)
 
-    thread = threading.Thread(target=run_task)
+    thread = threading.Thread(target=run_task, daemon=True)
     thread.start()
 
     return jsonify({'status': 'started'})
@@ -360,25 +440,29 @@ def train_models():
         return jsonify({'error': 'A task is already running'}), 400
 
     def run_task():
-        task_status['running'] = True
-        task_status['current_task'] = 'Training models'
-        task_status['progress'] = 0
-        task_status['message'] = 'Training UC prediction model...'
+        task_status.update(
+            running=True,
+            current_task='Training models',
+            progress=0,
+            message='Training ML prediction models...'
+        )
 
         try:
             uc_success, duration_success = predictor.train_all_models()
-            task_status['results'] = {
-                'uc_model': 'success' if uc_success else 'failed',
-                'duration_model': 'success' if duration_success else 'failed'
-            }
-            task_status['message'] = 'Models trained successfully'
+            task_status.update(
+                results={
+                    'uc_model': 'success' if uc_success else 'failed',
+                    'duration_model': 'success' if duration_success else 'failed'
+                },
+                message='Models trained successfully!' if uc_success else 'Model training completed with issues'
+            )
+            cache.clear()
         except Exception as e:
             task_status['message'] = f"Error: {str(e)}"
         finally:
-            task_status['running'] = False
-            task_status['progress'] = 100
+            task_status.update(running=False, progress=100)
 
-    thread = threading.Thread(target=run_task)
+    thread = threading.Thread(target=run_task, daemon=True)
     thread.start()
 
     return jsonify({'status': 'started'})
@@ -391,44 +475,49 @@ def run_full_pipeline():
         return jsonify({'error': 'A task is already running'}), 400
 
     def run_task():
-        task_status['running'] = True
-        task_status['current_task'] = 'Full pipeline'
-        task_status['progress'] = 0
+        task_status.update(
+            running=True,
+            current_task='Full pipeline',
+            progress=0
+        )
 
         try:
             # Step 1: Fetch stocks
-            task_status['message'] = 'Step 1/5: Fetching stock lists...'
-            stock_fetcher.fetch_and_save_all()
+            task_status['message'] = 'Step 1/5: Fetching stock lists from NSE & BSE...'
+            fetch_results = stock_fetcher.fetch_and_save_all()
             task_status['progress'] = 20
 
             # Step 2: Download data
-            task_status['message'] = 'Step 2/5: Downloading OHLCV data...'
+            task_status['message'] = 'Step 2/5: Downloading OHLCV price data...'
             ohlcv_downloader.download_all_stocks()
             task_status['progress'] = 50
 
             # Step 3: Calculate indicators
-            task_status['message'] = 'Step 3/5: Calculating indicators...'
+            task_status['message'] = 'Step 3/5: Calculating technical indicators...'
             indicator_calc.calculate_for_all_stocks()
             task_status['progress'] = 70
 
             # Step 4: Detect circuits
-            task_status['message'] = 'Step 4/5: Detecting circuits...'
-            circuit_detector.detect_for_all_stocks()
+            task_status['message'] = 'Step 4/5: Detecting UC/LC circuits...'
+            circuit_results = circuit_detector.detect_for_all_stocks()
             task_status['progress'] = 85
 
             # Step 5: Train models
-            task_status['message'] = 'Step 5/5: Training models...'
+            task_status['message'] = 'Step 5/5: Training prediction models...'
             predictor.train_all_models()
             task_status['progress'] = 100
 
-            task_status['message'] = 'Pipeline completed successfully!'
+            task_status['message'] = f"Pipeline completed! Fetched {fetch_results['total']} stocks, found {circuit_results['total_uc']} UC events"
+
+            # Clear all caches
+            cache.clear()
 
         except Exception as e:
             task_status['message'] = f"Error: {str(e)}"
         finally:
             task_status['running'] = False
 
-    thread = threading.Thread(target=run_task)
+    thread = threading.Thread(target=run_task, daemon=True)
     thread.start()
 
     return jsonify({'status': 'started'})
