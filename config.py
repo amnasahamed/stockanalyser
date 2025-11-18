@@ -35,8 +35,14 @@ SUPPORT_RESISTANCE_PERIOD = 20
 
 # Data download settings
 DOWNLOAD_HISTORY_DAYS = 365  # 1 year of historical data
-DOWNLOAD_BATCH_SIZE = 50  # Stocks per batch
-DOWNLOAD_DELAY = 1  # Seconds between batches
+DOWNLOAD_BATCH_SIZE = 100  # Stocks per batch (optimized for 16GB RAM)
+DOWNLOAD_DELAY = 0.5  # Seconds between batches
+
+# ML Model settings (optimized for M4 chip)
+RF_N_ESTIMATORS = 200  # More trees for better accuracy
+RF_MAX_DEPTH = 15
+RF_N_JOBS = -1  # Use all CPU cores (M4 has 10 cores)
+GB_N_ESTIMATORS = 150
 
 # Flask settings
 SECRET_KEY = 'stock-circuit-predictor-local-key'

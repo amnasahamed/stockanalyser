@@ -16,7 +16,8 @@ from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import MODELS_DIR, UC_TOLERANCE, LC_TOLERANCE
+from config import (MODELS_DIR, UC_TOLERANCE, LC_TOLERANCE,
+                    RF_N_ESTIMATORS, RF_MAX_DEPTH, RF_N_JOBS, GB_N_ESTIMATORS)
 from database.db_manager import DatabaseManager
 from analysis.indicators import IndicatorCalculator
 from analysis.circuit_detector import CircuitDetector
@@ -219,13 +220,13 @@ class CircuitPredictor:
         X_train_scaled = self.uc_scaler.fit_transform(X_train)
         X_test_scaled = self.uc_scaler.transform(X_test)
 
-        # Train model
+        # Train model (optimized for M4 chip)
         self.uc_model = RandomForestClassifier(
-            n_estimators=100,
-            max_depth=10,
+            n_estimators=RF_N_ESTIMATORS,
+            max_depth=RF_MAX_DEPTH,
             class_weight=class_weight,
             random_state=42,
-            n_jobs=-1
+            n_jobs=RF_N_JOBS
         )
         self.uc_model.fit(X_train_scaled, y_train)
 
@@ -260,9 +261,9 @@ class CircuitPredictor:
         X_train_scaled = self.duration_scaler.fit_transform(X_train)
         X_test_scaled = self.duration_scaler.transform(X_test)
 
-        # Train model
+        # Train model (optimized for M4 chip)
         self.duration_model = GradientBoostingRegressor(
-            n_estimators=100,
+            n_estimators=GB_N_ESTIMATORS,
             max_depth=5,
             random_state=42
         )
