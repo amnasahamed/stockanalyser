@@ -1,0 +1,107 @@
+{% extends 'base.html' %}
+
+{% block title %}History - Stock Circuit Predictor{% endblock %}
+
+{% block content %}
+<div class="history">
+    <h1>Circuit History</h1>
+    <p class="subtitle">Historical record of UC and LC events</p>
+
+    <!-- Filters -->
+    <div class="filters">
+        <form method="GET" class="filter-form">
+            <div class="filter-group">
+                <label for="type">Event Type:</label>
+                <select name="type" id="type">
+                    <option value="">All</option>
+                    <option value="UC" {% if event_type == 'UC' %}selected{% endif %}>Upper Circuit</option>
+                    <option value="LC" {% if event_type == 'LC' %}selected{% endif %}>Lower Circuit</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="days">Period:</label>
+                <select name="days" id="days">
+                    <option value="7" {% if days == 7 %}selected{% endif %}>Last 7 days</option>
+                    <option value="30" {% if days == 30 %}selected{% endif %}>Last 30 days</option>
+                    <option value="90" {% if days == 90 %}selected{% endif %}>Last 90 days</option>
+                    <option value="180" {% if days == 180 %}selected{% endif %}>Last 180 days</option>
+                    <option value="365" {% if days == 365 %}selected{% endif %}>Last year</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary">Apply Filters</button>
+        </form>
+    </div>
+
+    <!-- Circuit Events -->
+    <div class="section">
+        <h2>Circuit Events ({{ events|length }})</h2>
+        {% if events %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Symbol</th>
+                    <th>Name</th>
+                    <th>Exchange</th>
+                    <th>Type</th>
+                    <th>Close</th>
+                    <th>High</th>
+                    <th>Low</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for event in events %}
+                <tr>
+                    <td>{{ event.date|format_date }}</td>
+                    <td><a href="{{ url_for('stock_analysis', symbol=event.symbol) }}">{{ event.symbol }}</a></td>
+                    <td>{{ event.name }}</td>
+                    <td>{{ event.exchange }}</td>
+                    <td>
+                        <span class="status-badge {% if event.event_type == 'UC' %}uc{% else %}lc{% endif %}">
+                            {{ event.event_type }}
+                        </span>
+                    </td>
+                    <td>₹{{ event.close_price|format_number }}</td>
+                    <td>₹{{ event.high_price|format_number }}</td>
+                    <td>₹{{ event.low_price|format_number }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="no-data">No circuit events found for the selected criteria.</p>
+        {% endif %}
+    </div>
+
+    <!-- UC to LC Duration -->
+    <div class="section">
+        <h2>UC to LC Duration Analysis</h2>
+        {% if uc_to_lc %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Name</th>
+                    <th>UC Date</th>
+                    <th>LC Date</th>
+                    <th>Days</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in uc_to_lc %}
+                <tr>
+                    <td><a href="{{ url_for('stock_analysis', symbol=record.symbol) }}">{{ record.symbol }}</a></td>
+                    <td>{{ record.name }}</td>
+                    <td>{{ record.uc_date|format_date }}</td>
+                    <td>{{ record.lc_date|format_date }}</td>
+                    <td>{{ record.days_to_lc }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="no-data">No UC to LC duration data available.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

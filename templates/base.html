@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Stock Circuit Predictor{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <a href="{{ url_for('index') }}">Stock Circuit Predictor</a>
+        </div>
+        <div class="nav-links">
+            <a href="{{ url_for('index') }}" {% if request.endpoint == 'index' %}class="active"{% endif %}>Dashboard</a>
+            <a href="{{ url_for('screener') }}" {% if request.endpoint == 'screener' %}class="active"{% endif %}>UC Screener</a>
+            <a href="{{ url_for('history') }}" {% if request.endpoint == 'history' %}class="active"{% endif %}>History</a>
+            <a href="{{ url_for('data_management') }}" {% if request.endpoint == 'data_management' %}class="active"{% endif %}>Data</a>
+        </div>
+        <div class="nav-search">
+            <input type="text" id="stock-search" placeholder="Search stocks..." autocomplete="off">
+            <div id="search-results"></div>
+        </div>
+    </nav>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <p>Stock Circuit Predictor - Local Analysis System</p>
+    </footer>
+
+    <script>
+        // Stock search functionality
+        const searchInput = document.getElementById('stock-search');
+        const searchResults = document.getElementById('search-results');
+
+        searchInput.addEventListener('input', async (e) => {
+            const query = e.target.value.trim();
+            if (query.length < 2) {
+                searchResults.style.display = 'none';
+                return;
+            }
+
+            try {
+                const response = await fetch(`/search?q=${encodeURIComponent(query)}`);
+                const results = await response.json();
+
+                if (results.length === 0) {
+                    searchResults.innerHTML = '<div class="search-item">No results found</div>';
+                } else {
+                    searchResults.innerHTML = results.map(stock =>
+                        `<a href="/stock/${stock.symbol}" class="search-item">
+                            <strong>${stock.symbol}</strong> - ${stock.name} (${stock.exchange})
+                        </a>`
+                    ).join('');
+                }
+                searchResults.style.display = 'block';
+            } catch (error) {
+                console.error('Search error:', error);
+            }
+        });
+
+        // Hide search results when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+                searchResults.style.display = 'none';
+            }
+        });
+
+        // Task status polling
+        function pollTaskStatus() {
+            fetch('/api/task/status')
+                .then(response => response.json())
+                .then(data => {
+                    const statusEl = document.getElementById('task-status');
+                    if (statusEl) {
+                        if (data.running) {
+                            statusEl.innerHTML = `
+                                <div class="task-running">
+                                    <div class="task-message">${data.message}</div>
+                                    <div class="progress-bar">
+                                        <div class="progress" style="width: ${data.progress}%"></div>
+                                    </div>
+                                </div>
+                            `;
+                            setTimeout(pollTaskStatus, 1000);
+                        } else if (data.message) {
+                            statusEl.innerHTML = `
+                                <div class="task-complete">
+                                    <div class="task-message">${data.message}</div>
+                                </div>
+                            `;
+                        }
+                    }
+                });
+        }
+
+        // Start polling if there's a task status element
+        if (document.getElementById('task-status')) {
+            pollTaskStatus();
+        }
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

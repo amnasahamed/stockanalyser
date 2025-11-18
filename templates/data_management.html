@@ -1,0 +1,231 @@
+{% extends 'base.html' %}
+
+{% block title %}Data Management - Stock Circuit Predictor{% endblock %}
+
+{% block content %}
+<div class="data-management">
+    <h1>Data Management</h1>
+    <p class="subtitle">Download stock data and train prediction models</p>
+
+    <!-- Current Status -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">NSE Stocks</div>
+            <div class="stat-value">{{ nse_count }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">BSE Stocks</div>
+            <div class="stat-value">{{ bse_count }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Downloaded</div>
+            <div class="stat-value">{{ download_stats.completed or 0 }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Pending</div>
+            <div class="stat-value">{{ download_stats.pending or 0 }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Errors</div>
+            <div class="stat-value">{{ download_stats.errors or 0 }}</div>
+        </div>
+    </div>
+
+    <!-- Task Status -->
+    <div id="task-status" class="task-status-container">
+        {% if task_status.running %}
+        <div class="task-running">
+            <div class="task-message">{{ task_status.message }}</div>
+            <div class="progress-bar">
+                <div class="progress" style="width: {{ task_status.progress }}%"></div>
+            </div>
+        </div>
+        {% elif task_status.message %}
+        <div class="task-complete">
+            <div class="task-message">{{ task_status.message }}</div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Actions -->
+    <div class="section">
+        <h2>Data Pipeline</h2>
+
+        <div class="pipeline-steps">
+            <!-- Step 1: Fetch Stocks -->
+            <div class="pipeline-step">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <h3>Fetch Stock Lists</h3>
+                    <p>Download the complete list of stocks from NSE and BSE exchanges.</p>
+                    <button class="btn btn-primary" onclick="runTask('fetch-stocks')" {% if task_status.running %}disabled{% endif %}>
+                        Fetch Stocks
+                    </button>
+                </div>
+            </div>
+
+            <!-- Step 2: Download Data -->
+            <div class="pipeline-step">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <h3>Download OHLCV Data</h3>
+                    <p>Download historical price data for all stocks. Supports resume if interrupted.</p>
+                    <div class="button-group">
+                        <button class="btn btn-primary" onclick="runTask('download-data')" {% if task_status.running %}disabled{% endif %}>
+                            Download All
+                        </button>
+                        <button class="btn btn-secondary" onclick="runTask('download-data', {exchange: 'NSE'})" {% if task_status.running %}disabled{% endif %}>
+                            NSE Only
+                        </button>
+                        <button class="btn btn-secondary" onclick="runTask('download-data', {exchange: 'BSE'})" {% if task_status.running %}disabled{% endif %}>
+                            BSE Only
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: Calculate Indicators -->
+            <div class="pipeline-step">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                    <h3>Calculate Indicators</h3>
+                    <p>Calculate technical indicators (RSI, MACD, MA, ATR, etc.) for all stocks.</p>
+                    <button class="btn btn-primary" onclick="runTask('calculate-indicators')" {% if task_status.running %}disabled{% endif %}>
+                        Calculate Indicators
+                    </button>
+                </div>
+            </div>
+
+            <!-- Step 4: Detect Circuits -->
+            <div class="pipeline-step">
+                <div class="step-number">4</div>
+                <div class="step-content">
+                    <h3>Detect Circuits</h3>
+                    <p>Identify all UC and LC events using the 1% tolerance rule.</p>
+                    <button class="btn btn-primary" onclick="runTask('detect-circuits')" {% if task_status.running %}disabled{% endif %}>
+                        Detect Circuits
+                    </button>
+                </div>
+            </div>
+
+            <!-- Step 5: Train Models -->
+            <div class="pipeline-step">
+                <div class="step-number">5</div>
+                <div class="step-content">
+                    <h3>Train Models</h3>
+                    <p>Train ML models for UC prediction and UC-to-LC duration estimation.</p>
+                    <button class="btn btn-primary" onclick="runTask('train-models')" {% if task_status.running %}disabled{% endif %}>
+                        Train Models
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Run Full Pipeline -->
+        <div class="full-pipeline">
+            <h3>Run Complete Pipeline</h3>
+            <p>Execute all steps in sequence. This may take a while depending on the number of stocks.</p>
+            <button class="btn btn-success btn-large" onclick="runTask('run-full-pipeline')" {% if task_status.running %}disabled{% endif %}>
+                Run Full Pipeline
+            </button>
+        </div>
+    </div>
+
+    <!-- Information -->
+    <div class="section">
+        <h2>Information</h2>
+        <div class="info-box">
+            <h3>UC/LC Detection Rules</h3>
+            <ul>
+                <li><strong>Upper Circuit (UC):</strong> Close price equals High price within 1% tolerance</li>
+                <li><strong>Lower Circuit (LC):</strong> Close price equals Low price within 1% tolerance</li>
+            </ul>
+        </div>
+        <div class="info-box">
+            <h3>Technical Indicators Calculated</h3>
+            <ul>
+                <li>Price changes (1-day, 5-day)</li>
+                <li>Moving averages (5, 20, 50 day)</li>
+                <li>RSI (14-period)</li>
+                <li>MACD (12, 26, 9)</li>
+                <li>Volume ratio (20-day)</li>
+                <li>ATR (14-period)</li>
+                <li>Support/Resistance (20-day)</li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    async function runTask(task, params = {}) {
+        try {
+            const response = await fetch(`/api/${task}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(params)
+            });
+
+            const result = await response.json();
+
+            if (result.error) {
+                alert(result.error);
+                return;
+            }
+
+            // Disable all buttons
+            document.querySelectorAll('.btn').forEach(btn => btn.disabled = true);
+
+            // Start polling for status
+            pollTaskStatus();
+
+        } catch (error) {
+            alert('Error starting task: ' + error.message);
+        }
+    }
+
+    function pollTaskStatus() {
+        fetch('/api/task/status')
+            .then(response => response.json())
+            .then(data => {
+                const statusEl = document.getElementById('task-status');
+
+                if (data.running) {
+                    statusEl.innerHTML = `
+                        <div class="task-running">
+                            <div class="task-message">${data.message}</div>
+                            <div class="progress-bar">
+                                <div class="progress" style="width: ${data.progress}%"></div>
+                            </div>
+                            <div class="progress-text">${data.progress}%</div>
+                        </div>
+                    `;
+                    setTimeout(pollTaskStatus, 1000);
+                } else {
+                    statusEl.innerHTML = `
+                        <div class="task-complete">
+                            <div class="task-message">${data.message || 'Ready'}</div>
+                        </div>
+                    `;
+                    // Re-enable buttons
+                    document.querySelectorAll('.btn').forEach(btn => btn.disabled = false);
+
+                    // Refresh page after completion
+                    if (data.message && data.message !== 'Ready') {
+                        setTimeout(() => location.reload(), 2000);
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Status polling error:', error);
+                setTimeout(pollTaskStatus, 2000);
+            });
+    }
+
+    // Start polling on page load
+    pollTaskStatus();
+</script>
+{% endblock %}

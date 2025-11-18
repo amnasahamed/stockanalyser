@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+
+{% block title %}UC Screener - Stock Circuit Predictor{% endblock %}
+
+{% block content %}
+<div class="screener">
+    <h1>UC Screener</h1>
+    <p class="subtitle">Find stocks with high probability of hitting Upper Circuit tomorrow</p>
+
+    <!-- Filters -->
+    <div class="filters">
+        <form method="GET" class="filter-form">
+            <div class="filter-group">
+                <label for="min_prob">Min Probability:</label>
+                <select name="min_prob" id="min_prob">
+                    <option value="10" {% if min_prob == 10 %}selected{% endif %}>10%</option>
+                    <option value="20" {% if min_prob == 20 %}selected{% endif %}>20%</option>
+                    <option value="30" {% if min_prob == 30 %}selected{% endif %}>30%</option>
+                    <option value="40" {% if min_prob == 40 %}selected{% endif %}>40%</option>
+                    <option value="50" {% if min_prob == 50 %}selected{% endif %}>50%</option>
+                    <option value="60" {% if min_prob == 60 %}selected{% endif %}>60%</option>
+                    <option value="70" {% if min_prob == 70 %}selected{% endif %}>70%</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="exchange">Exchange:</label>
+                <select name="exchange" id="exchange">
+                    <option value="">All</option>
+                    <option value="NSE" {% if exchange == 'NSE' %}selected{% endif %}>NSE</option>
+                    <option value="BSE" {% if exchange == 'BSE' %}selected{% endif %}>BSE</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary">Apply Filters</button>
+        </form>
+    </div>
+
+    <!-- Results -->
+    <div class="results">
+        <h2>Results ({{ candidates|length }} stocks)</h2>
+
+        {% if candidates %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Name</th>
+                    <th>Exchange</th>
+                    <th>Close</th>
+                    <th>Current Status</th>
+                    <th>UC Probability</th>
+                    <th>UC→LC Days</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for stock in candidates %}
+                <tr>
+                    <td><a href="{{ url_for('stock_analysis', symbol=stock.symbol) }}">{{ stock.symbol }}</a></td>
+                    <td>{{ stock.name }}</td>
+                    <td>{{ stock.exchange }}</td>
+                    <td>{{ stock.close|format_number }}</td>
+                    <td>
+                        {% if stock.is_uc %}
+                        <span class="status-badge uc">UC</span>
+                        {% elif stock.is_lc %}
+                        <span class="status-badge lc">LC</span>
+                        {% else %}
+                        <span class="status-badge normal">Normal</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="probability-bar">
+                            <div class="probability-fill {% if stock.uc_probability >= 70 %}high{% elif stock.uc_probability >= 50 %}medium{% else %}low{% endif %}" style="width: {{ stock.uc_probability }}%"></div>
+                            <span class="probability-text">{{ stock.uc_probability }}%</span>
+                        </div>
+                    </td>
+                    <td>{{ stock.predicted_uc_to_lc_days or 'N/A' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="no-data">No stocks found matching the criteria. Try lowering the minimum probability threshold or <a href="{{ url_for('data_management') }}">update your data</a>.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

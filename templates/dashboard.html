@@ -1,0 +1,152 @@
+{% extends 'base.html' %}
+
+{% block title %}Dashboard - Stock Circuit Predictor{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <h1>Dashboard</h1>
+
+    <!-- Statistics Cards -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Total Stocks</div>
+            <div class="stat-value">{{ total_count }}</div>
+            <div class="stat-detail">NSE: {{ nse_count }} | BSE: {{ bse_count }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Data Downloaded</div>
+            <div class="stat-value">{{ download_stats.completed or 0 }}</div>
+            <div class="stat-detail">Pending: {{ download_stats.pending or 0 }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total UC Events</div>
+            <div class="stat-value">{{ circuit_stats.total_uc }}</div>
+            <div class="stat-detail">Historical</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total LC Events</div>
+            <div class="stat-value">{{ circuit_stats.total_lc }}</div>
+            <div class="stat-detail">Historical</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Avg UC to LC</div>
+            <div class="stat-value">{{ circuit_stats.avg_days_uc_to_lc }} days</div>
+            <div class="stat-detail">{{ circuit_stats.uc_to_lc_samples }} samples</div>
+        </div>
+    </div>
+
+    <!-- Today's Circuits -->
+    <div class="section">
+        <h2>Today's Circuit Events</h2>
+        <div class="two-columns">
+            <div class="column">
+                <h3>Upper Circuits ({{ today_uc|length }})</h3>
+                {% if today_uc %}
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Name</th>
+                            <th>Close</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for event in today_uc %}
+                        <tr>
+                            <td><a href="{{ url_for('stock_analysis', symbol=event.symbol) }}">{{ event.symbol }}</a></td>
+                            <td>{{ event.name }}</td>
+                            <td>{{ event.close_price|format_number }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="no-data">No upper circuits today</p>
+                {% endif %}
+            </div>
+            <div class="column">
+                <h3>Lower Circuits ({{ today_lc|length }})</h3>
+                {% if today_lc %}
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Name</th>
+                            <th>Close</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for event in today_lc %}
+                        <tr>
+                            <td><a href="{{ url_for('stock_analysis', symbol=event.symbol) }}">{{ event.symbol }}</a></td>
+                            <td>{{ event.name }}</td>
+                            <td>{{ event.close_price|format_number }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="no-data">No lower circuits today</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Top UC Candidates -->
+    <div class="section">
+        <h2>Top UC Candidates for Tomorrow</h2>
+        {% if top_candidates %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Name</th>
+                    <th>Exchange</th>
+                    <th>Current Status</th>
+                    <th>UC Probability</th>
+                    <th>Predicted UC→LC Days</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for candidate in top_candidates %}
+                <tr>
+                    <td><a href="{{ url_for('stock_analysis', symbol=candidate.symbol) }}">{{ candidate.symbol }}</a></td>
+                    <td>{{ candidate.name }}</td>
+                    <td>{{ candidate.exchange }}</td>
+                    <td>
+                        {% if candidate.is_uc %}
+                        <span class="status-badge uc">UC</span>
+                        {% elif candidate.is_lc %}
+                        <span class="status-badge lc">LC</span>
+                        {% else %}
+                        <span class="status-badge normal">Normal</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="probability-bar">
+                            <div class="probability-fill" style="width: {{ candidate.uc_probability }}%"></div>
+                            <span class="probability-text">{{ candidate.uc_probability }}%</span>
+                        </div>
+                    </td>
+                    <td>{{ candidate.predicted_uc_to_lc_days or 'N/A' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <p><a href="{{ url_for('screener') }}">View all UC candidates →</a></p>
+        {% else %}
+        <p class="no-data">No predictions available. <a href="{{ url_for('data_management') }}">Download data and train models</a> first.</p>
+        {% endif %}
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="section">
+        <h2>Quick Actions</h2>
+        <div class="action-buttons">
+            <a href="{{ url_for('screener') }}" class="btn btn-primary">Screen for UC</a>
+            <a href="{{ url_for('history') }}" class="btn btn-secondary">View History</a>
+            <a href="{{ url_for('data_management') }}" class="btn btn-secondary">Manage Data</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

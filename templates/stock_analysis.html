@@ -1,0 +1,269 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ stock.symbol }} - Stock Circuit Predictor{% endblock %}
+
+{% block content %}
+<div class="stock-analysis">
+    <div class="stock-header">
+        <div class="stock-info">
+            <h1>{{ stock.symbol }}</h1>
+            <p class="stock-name">{{ stock.name }}</p>
+            <p class="stock-exchange">{{ stock.exchange }}</p>
+        </div>
+        <div class="stock-status">
+            {% if prediction.is_uc %}
+            <span class="status-badge uc large">Upper Circuit</span>
+            {% elif prediction.is_lc %}
+            <span class="status-badge lc large">Lower Circuit</span>
+            {% else %}
+            <span class="status-badge normal large">Normal</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Key Metrics -->
+    <div class="metrics-grid">
+        <div class="metric-card">
+            <div class="metric-label">Close Price</div>
+            <div class="metric-value">₹{{ prediction.close|format_number }}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">High</div>
+            <div class="metric-value">₹{{ prediction.high|format_number }}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Low</div>
+            <div class="metric-value">₹{{ prediction.low|format_number }}</div>
+        </div>
+        <div class="metric-card highlight">
+            <div class="metric-label">UC Probability (Tomorrow)</div>
+            <div class="metric-value">
+                {% if prediction.uc_probability %}
+                {{ prediction.uc_probability }}%
+                {% else %}
+                N/A
+                {% endif %}
+            </div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Predicted UC→LC Days</div>
+            <div class="metric-value">
+                {% if prediction.predicted_uc_to_lc_days %}
+                {{ prediction.predicted_uc_to_lc_days }}
+                {% else %}
+                N/A
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Technical Indicators -->
+    {% if indicators %}
+    <div class="section">
+        <h2>Technical Indicators</h2>
+        <div class="indicators-grid">
+            <div class="indicator">
+                <span class="indicator-label">1-Day Change</span>
+                <span class="indicator-value {% if indicators.price_change_1d and indicators.price_change_1d > 0 %}positive{% elif indicators.price_change_1d and indicators.price_change_1d < 0 %}negative{% endif %}">
+                    {{ indicators.price_change_1d|format_number }}%
+                </span>
+            </div>
+            <div class="indicator">
+                <span class="indicator-label">5-Day Change</span>
+                <span class="indicator-value {% if indicators.price_change_5d and indicators.price_change_5d > 0 %}positive{% elif indicators.price_change_5d and indicators.price_change_5d < 0 %}negative{% endif %}">
+                    {{ indicators.price_change_5d|format_number }}%
+                </span>
+            </div>
+            <div class="indicator">
+                <span class="indicator-label">RSI (14)</span>
+                <span class="indicator-value">{{ indicators.rsi_14|format_number }}</span>
+            </div>
+            <div class="indicator">
+                <span class="indicator-label">MACD</span>
+                <span class="indicator-value">{{ indicators.macd|format_number }}</span>
+            </div>
+            <div class="indicator">
+                <span class="indicator-label">MA (5)</span>
+                <span class="indicator-value">₹{{ indicators.ma_5|format_number }}</span>
+            </div>
+            <div class="indicator">
+                <span class="indicator-label">MA (20)</span>
+                <span class="indicator-value">₹{{ indicators.ma_20|format_number }}</span>
+            </div>
+            <div class="indicator">
+                <span class="indicator-label">MA (50)</span>
+                <span class="indicator-value">₹{{ indicators.ma_50|format_number }}</span>
+            </div>
+            <div class="indicator">
+                <span class="indicator-label">Volume Ratio (20)</span>
+                <span class="indicator-value">{{ indicators.volume_ratio_20|format_number }}</span>
+            </div>
+            <div class="indicator">
+                <span class="indicator-label">ATR (14)</span>
+                <span class="indicator-value">{{ indicators.atr_14|format_number }}</span>
+            </div>
+            <div class="indicator">
+                <span class="indicator-label">Support (20)</span>
+                <span class="indicator-value">₹{{ indicators.support_20|format_number }}</span>
+            </div>
+            <div class="indicator">
+                <span class="indicator-label">Resistance (20)</span>
+                <span class="indicator-value">₹{{ indicators.resistance_20|format_number }}</span>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Price Chart -->
+    <div class="section">
+        <h2>Price Chart (90 Days)</h2>
+        <div id="price-chart" class="chart-container"></div>
+    </div>
+
+    <!-- Circuit History -->
+    <div class="section">
+        <h2>Circuit History</h2>
+        <div class="two-columns">
+            <div class="column">
+                <h3>Upper Circuits ({{ uc_events|length }})</h3>
+                {% if uc_events %}
+                <table class="data-table small">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Close</th>
+                            <th>Tolerance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for event in uc_events[:20] %}
+                        <tr>
+                            <td>{{ event.date|format_date }}</td>
+                            <td>₹{{ event.close_price|format_number }}</td>
+                            <td>{{ event.tolerance_pct|format_number }}%</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="no-data">No UC events recorded</p>
+                {% endif %}
+            </div>
+            <div class="column">
+                <h3>Lower Circuits ({{ lc_events|length }})</h3>
+                {% if lc_events %}
+                <table class="data-table small">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Close</th>
+                            <th>Tolerance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for event in lc_events[:20] %}
+                        <tr>
+                            <td>{{ event.date|format_date }}</td>
+                            <td>₹{{ event.close_price|format_number }}</td>
+                            <td>{{ event.tolerance_pct|format_number }}%</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="no-data">No LC events recorded</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- UC to LC Duration History -->
+    {% if uc_to_lc %}
+    <div class="section">
+        <h2>UC to LC Duration History</h2>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>UC Date</th>
+                    <th>LC Date</th>
+                    <th>Days</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in uc_to_lc[:20] %}
+                <tr>
+                    <td>{{ record.uc_date|format_date }}</td>
+                    <td>{{ record.lc_date|format_date }}</td>
+                    <td>{{ record.days_to_lc }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Simple price chart using canvas
+    const chartData = {{ chart_data|safe }};
+
+    if (chartData && chartData.length > 0) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 800;
+        canvas.height = 300;
+        document.getElementById('price-chart').appendChild(canvas);
+
+        const ctx = canvas.getContext('2d');
+        const padding = 50;
+        const chartWidth = canvas.width - padding * 2;
+        const chartHeight = canvas.height - padding * 2;
+
+        // Find min/max
+        const prices = chartData.map(d => d.close);
+        const minPrice = Math.min(...prices) * 0.98;
+        const maxPrice = Math.max(...prices) * 1.02;
+
+        // Draw axes
+        ctx.strokeStyle = '#ddd';
+        ctx.beginPath();
+        ctx.moveTo(padding, padding);
+        ctx.lineTo(padding, canvas.height - padding);
+        ctx.lineTo(canvas.width - padding, canvas.height - padding);
+        ctx.stroke();
+
+        // Draw price line
+        ctx.strokeStyle = '#2196F3';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+
+        chartData.forEach((d, i) => {
+            const x = padding + (i / (chartData.length - 1)) * chartWidth;
+            const y = canvas.height - padding - ((d.close - minPrice) / (maxPrice - minPrice)) * chartHeight;
+
+            if (i === 0) {
+                ctx.moveTo(x, y);
+            } else {
+                ctx.lineTo(x, y);
+            }
+        });
+
+        ctx.stroke();
+
+        // Draw labels
+        ctx.fillStyle = '#666';
+        ctx.font = '12px sans-serif';
+        ctx.fillText(`₹${maxPrice.toFixed(2)}`, 5, padding + 10);
+        ctx.fillText(`₹${minPrice.toFixed(2)}`, 5, canvas.height - padding);
+
+        // Date labels
+        if (chartData.length > 0) {
+            ctx.fillText(chartData[0].date, padding, canvas.height - 10);
+            ctx.fillText(chartData[chartData.length - 1].date, canvas.width - padding - 60, canvas.height - 10);
+        }
+    } else {
+        document.getElementById('price-chart').innerHTML = '<p class="no-data">No chart data available</p>';
+    }
+</script>
+{% endblock %}
