@@ -138,6 +138,112 @@ class DatabaseManager:
             )
         ''')
 
+        # Extended stock fundamentals table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS stock_fundamentals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_id INTEGER NOT NULL,
+                market_cap REAL,
+                market_cap_category TEXT,
+                week_52_high REAL,
+                week_52_low REAL,
+                avg_delivery_pct REAL,
+                is_fno INTEGER DEFAULT 0,
+                lot_size INTEGER,
+                is_asm INTEGER DEFAULT 0,
+                is_gsm INTEGER DEFAULT 0,
+                is_esm INTEGER DEFAULT 0,
+                is_penny_stock INTEGER DEFAULT 0,
+                face_value REAL,
+                book_value REAL,
+                pe_ratio REAL,
+                pb_ratio REAL,
+                dividend_yield REAL,
+                last_updated TIMESTAMP,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id),
+                UNIQUE(stock_id)
+            )
+        ''')
+
+        # Extended indicators table with EMA, momentum, etc.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS extended_indicators (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_id INTEGER NOT NULL,
+                date DATE NOT NULL,
+                ema_9 REAL,
+                ema_21 REAL,
+                ema_50 REAL,
+                ema_200 REAL,
+                sma_200 REAL,
+                bollinger_upper REAL,
+                bollinger_middle REAL,
+                bollinger_lower REAL,
+                stochastic_k REAL,
+                stochastic_d REAL,
+                adx_14 REAL,
+                obv REAL,
+                vwap REAL,
+                momentum_score REAL,
+                momentum_rank INTEGER,
+                distance_from_52w_high REAL,
+                distance_from_52w_low REAL,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id),
+                UNIQUE(stock_id, date)
+            )
+        ''')
+
+        # Bulk/Block deals table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bulk_block_deals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_id INTEGER NOT NULL,
+                date DATE NOT NULL,
+                deal_type TEXT NOT NULL,
+                client_name TEXT,
+                buy_sell TEXT,
+                quantity INTEGER,
+                price REAL,
+                total_value REAL,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id)
+            )
+        ''')
+
+        # Breakout signals table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS breakout_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_id INTEGER NOT NULL,
+                date DATE NOT NULL,
+                signal_type TEXT NOT NULL,
+                signal_strength REAL,
+                entry_price REAL,
+                stop_loss REAL,
+                target_1 REAL,
+                target_2 REAL,
+                risk_reward_ratio REAL,
+                volume_confirmation INTEGER DEFAULT 0,
+                trend_confirmation INTEGER DEFAULT 0,
+                notes TEXT,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id),
+                UNIQUE(stock_id, date, signal_type)
+            )
+        ''')
+
+        # Daily delivery data table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS delivery_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_id INTEGER NOT NULL,
+                date DATE NOT NULL,
+                traded_qty INTEGER,
+                deliverable_qty INTEGER,
+                delivery_pct REAL,
+                FOREIGN KEY (stock_id) REFERENCES stocks(id),
+                UNIQUE(stock_id, date)
+            )
+        ''')
+
         # Create indexes for performance
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_ohlcv_stock_date ON ohlcv_data(stock_id, date)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_indicators_stock_date ON indicators(stock_id, date)')
@@ -145,6 +251,11 @@ class DatabaseManager:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_circuit_events_type ON circuit_events(event_type)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_stocks_symbol ON stocks(symbol)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_stocks_exchange ON stocks(exchange)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_extended_indicators_stock_date ON extended_indicators(stock_id, date)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_bulk_block_deals_date ON bulk_block_deals(date)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_breakout_signals_date ON breakout_signals(date)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_delivery_data_stock_date ON delivery_data(stock_id, date)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_fundamentals_market_cap ON stock_fundamentals(market_cap)')
 
         conn.commit()
         conn.close()
@@ -519,6 +630,332 @@ class DatabaseManager:
         results = cursor.fetchall()
         conn.close()
         return [dict(row) for row in results]
+
+    # Stock fundamentals operations
+    def update_stock_fundamentals(self, stock_id, data):
+        """Update stock fundamentals data"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT OR REPLACE INTO stock_fundamentals
+                (stock_id, market_cap, market_cap_category, week_52_high, week_52_low,
+                 avg_delivery_pct, is_fno, lot_size, is_asm, is_gsm, is_esm, is_penny_stock,
+                 face_value, book_value, pe_ratio, pb_ratio, dividend_yield, last_updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (stock_id, data.get('market_cap'), data.get('market_cap_category'),
+                  data.get('week_52_high'), data.get('week_52_low'), data.get('avg_delivery_pct'),
+                  data.get('is_fno', 0), data.get('lot_size'), data.get('is_asm', 0),
+                  data.get('is_gsm', 0), data.get('is_esm', 0), data.get('is_penny_stock', 0),
+                  data.get('face_value'), data.get('book_value'), data.get('pe_ratio'),
+                  data.get('pb_ratio'), data.get('dividend_yield'), datetime.now()))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
+
+    def get_stock_fundamentals(self, stock_id):
+        """Get stock fundamentals"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM stock_fundamentals WHERE stock_id = ?', (stock_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return dict(result) if result else None
+
+    def get_penny_stocks(self):
+        """Get all penny stocks"""
+        conn = self.get_connection()
+        query = '''
+            SELECT s.*, sf.market_cap, sf.week_52_high, sf.week_52_low
+            FROM stocks s
+            JOIN stock_fundamentals sf ON s.id = sf.stock_id
+            WHERE sf.is_penny_stock = 1 AND s.is_active = 1
+            ORDER BY sf.market_cap
+        '''
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+
+    def get_fno_stocks(self):
+        """Get all F&O stocks with lot sizes"""
+        conn = self.get_connection()
+        query = '''
+            SELECT s.*, sf.lot_size, sf.market_cap
+            FROM stocks s
+            JOIN stock_fundamentals sf ON s.id = sf.stock_id
+            WHERE sf.is_fno = 1 AND s.is_active = 1
+            ORDER BY s.symbol
+        '''
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+
+    # Extended indicators operations
+    def add_extended_indicators(self, stock_id, df):
+        """Add extended indicators for a stock"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            for _, row in df.iterrows():
+                cursor.execute('''
+                    INSERT OR REPLACE INTO extended_indicators
+                    (stock_id, date, ema_9, ema_21, ema_50, ema_200, sma_200,
+                     bollinger_upper, bollinger_middle, bollinger_lower,
+                     stochastic_k, stochastic_d, adx_14, obv, vwap,
+                     momentum_score, momentum_rank, distance_from_52w_high, distance_from_52w_low)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (stock_id, row['date'], row.get('ema_9'), row.get('ema_21'),
+                      row.get('ema_50'), row.get('ema_200'), row.get('sma_200'),
+                      row.get('bollinger_upper'), row.get('bollinger_middle'), row.get('bollinger_lower'),
+                      row.get('stochastic_k'), row.get('stochastic_d'), row.get('adx_14'),
+                      row.get('obv'), row.get('vwap'), row.get('momentum_score'),
+                      row.get('momentum_rank'), row.get('distance_from_52w_high'),
+                      row.get('distance_from_52w_low')))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
+
+    def get_extended_indicators(self, stock_id, start_date=None, end_date=None):
+        """Get extended indicators for a stock"""
+        conn = self.get_connection()
+        query = 'SELECT * FROM extended_indicators WHERE stock_id = ?'
+        params = [stock_id]
+        if start_date:
+            query += ' AND date >= ?'
+            params.append(start_date)
+        if end_date:
+            query += ' AND date <= ?'
+            params.append(end_date)
+        query += ' ORDER BY date'
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        return df
+
+    def get_top_momentum_stocks(self, limit=50, exchange=None):
+        """Get top stocks by momentum rank"""
+        conn = self.get_connection()
+        query = '''
+            SELECT s.symbol, s.name, s.exchange, ei.momentum_score, ei.momentum_rank, ei.date
+            FROM extended_indicators ei
+            JOIN stocks s ON ei.stock_id = s.id
+            WHERE ei.date = (SELECT MAX(date) FROM extended_indicators WHERE stock_id = ei.stock_id)
+        '''
+        params = []
+        if exchange:
+            query += ' AND s.exchange = ?'
+            params.append(exchange)
+        query += ' ORDER BY ei.momentum_rank ASC LIMIT ?'
+        params.append(limit)
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        return df
+
+    # Bulk/Block deals operations
+    def add_bulk_block_deal(self, stock_id, date, deal_type, client_name, buy_sell, quantity, price):
+        """Add a bulk or block deal"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            total_value = quantity * price if quantity and price else None
+            cursor.execute('''
+                INSERT INTO bulk_block_deals
+                (stock_id, date, deal_type, client_name, buy_sell, quantity, price, total_value)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (stock_id, date, deal_type, client_name, buy_sell, quantity, price, total_value))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
+
+    def get_bulk_block_deals(self, stock_id=None, start_date=None, end_date=None, deal_type=None):
+        """Get bulk/block deals"""
+        conn = self.get_connection()
+        query = '''
+            SELECT bb.*, s.symbol, s.name
+            FROM bulk_block_deals bb
+            JOIN stocks s ON bb.stock_id = s.id
+            WHERE 1=1
+        '''
+        params = []
+        if stock_id:
+            query += ' AND bb.stock_id = ?'
+            params.append(stock_id)
+        if start_date:
+            query += ' AND bb.date >= ?'
+            params.append(start_date)
+        if end_date:
+            query += ' AND bb.date <= ?'
+            params.append(end_date)
+        if deal_type:
+            query += ' AND bb.deal_type = ?'
+            params.append(deal_type)
+        query += ' ORDER BY bb.date DESC, bb.total_value DESC'
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        return df
+
+    # Breakout signals operations
+    def add_breakout_signal(self, stock_id, date, signal_type, signal_strength, entry_price,
+                           stop_loss, target_1, target_2, risk_reward_ratio,
+                           volume_confirmation=False, trend_confirmation=False, notes=None):
+        """Add a breakout signal"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT OR REPLACE INTO breakout_signals
+                (stock_id, date, signal_type, signal_strength, entry_price, stop_loss,
+                 target_1, target_2, risk_reward_ratio, volume_confirmation, trend_confirmation, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (stock_id, date, signal_type, signal_strength, entry_price, stop_loss,
+                  target_1, target_2, risk_reward_ratio, int(volume_confirmation),
+                  int(trend_confirmation), notes))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
+
+    def get_breakout_signals(self, min_strength=0, date=None, signal_type=None):
+        """Get breakout signals"""
+        conn = self.get_connection()
+        query = '''
+            SELECT bs.*, s.symbol, s.name, s.exchange
+            FROM breakout_signals bs
+            JOIN stocks s ON bs.stock_id = s.id
+            WHERE bs.signal_strength >= ?
+        '''
+        params = [min_strength]
+        if date:
+            query += ' AND bs.date = ?'
+            params.append(date)
+        if signal_type:
+            query += ' AND bs.signal_type = ?'
+            params.append(signal_type)
+        query += ' ORDER BY bs.signal_strength DESC, bs.risk_reward_ratio DESC'
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        return df
+
+    # Delivery data operations
+    def add_delivery_data(self, stock_id, date, traded_qty, deliverable_qty, delivery_pct):
+        """Add delivery data for a stock"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT OR REPLACE INTO delivery_data
+                (stock_id, date, traded_qty, deliverable_qty, delivery_pct)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (stock_id, date, traded_qty, deliverable_qty, delivery_pct))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
+
+    def get_delivery_data(self, stock_id, start_date=None, end_date=None):
+        """Get delivery data for a stock"""
+        conn = self.get_connection()
+        query = 'SELECT * FROM delivery_data WHERE stock_id = ?'
+        params = [stock_id]
+        if start_date:
+            query += ' AND date >= ?'
+            params.append(start_date)
+        if end_date:
+            query += ' AND date <= ?'
+            params.append(end_date)
+        query += ' ORDER BY date'
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        return df
+
+    def get_high_delivery_stocks(self, min_delivery_pct=50, date=None):
+        """Get stocks with high delivery percentage"""
+        conn = self.get_connection()
+        query = '''
+            SELECT s.symbol, s.name, s.exchange, dd.delivery_pct, dd.traded_qty, dd.date
+            FROM delivery_data dd
+            JOIN stocks s ON dd.stock_id = s.id
+            WHERE dd.delivery_pct >= ?
+        '''
+        params = [min_delivery_pct]
+        if date:
+            query += ' AND dd.date = ?'
+            params.append(date)
+        else:
+            query += ' AND dd.date = (SELECT MAX(date) FROM delivery_data WHERE stock_id = dd.stock_id)'
+        query += ' ORDER BY dd.delivery_pct DESC'
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        return df
+
+    def get_comprehensive_stock_data(self, symbol):
+        """Get comprehensive stock data including all metrics"""
+        stock = self.get_stock_by_symbol(symbol)
+        if not stock:
+            return None
+
+        conn = self.get_connection()
+        stock_id = stock['id']
+
+        # Get fundamentals
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM stock_fundamentals WHERE stock_id = ?', (stock_id,))
+        fundamentals = cursor.fetchone()
+
+        # Get latest OHLCV
+        cursor.execute('SELECT * FROM ohlcv_data WHERE stock_id = ? ORDER BY date DESC LIMIT 1', (stock_id,))
+        ohlcv = cursor.fetchone()
+
+        # Get latest indicators
+        cursor.execute('SELECT * FROM indicators WHERE stock_id = ? ORDER BY date DESC LIMIT 1', (stock_id,))
+        indicators = cursor.fetchone()
+
+        # Get latest extended indicators
+        cursor.execute('SELECT * FROM extended_indicators WHERE stock_id = ? ORDER BY date DESC LIMIT 1', (stock_id,))
+        extended = cursor.fetchone()
+
+        # Get latest delivery data
+        cursor.execute('SELECT * FROM delivery_data WHERE stock_id = ? ORDER BY date DESC LIMIT 1', (stock_id,))
+        delivery = cursor.fetchone()
+
+        # Get recent breakout signals
+        cursor.execute('''
+            SELECT * FROM breakout_signals WHERE stock_id = ?
+            ORDER BY date DESC LIMIT 5
+        ''', (stock_id,))
+        signals = cursor.fetchall()
+
+        # Get recent bulk/block deals
+        cursor.execute('''
+            SELECT * FROM bulk_block_deals WHERE stock_id = ?
+            ORDER BY date DESC LIMIT 10
+        ''', (stock_id,))
+        deals = cursor.fetchall()
+
+        conn.close()
+
+        return {
+            'stock': stock,
+            'fundamentals': dict(fundamentals) if fundamentals else None,
+            'ohlcv': dict(ohlcv) if ohlcv else None,
+            'indicators': dict(indicators) if indicators else None,
+            'extended_indicators': dict(extended) if extended else None,
+            'delivery': dict(delivery) if delivery else None,
+            'breakout_signals': [dict(s) for s in signals],
+            'bulk_block_deals': [dict(d) for d in deals]
+        }
 
 
 # Create __init__.py

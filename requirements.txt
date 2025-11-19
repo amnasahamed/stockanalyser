@@ -20,5 +20,8 @@ flask>=3.0.0
 # Database
 # SQLite is built into Python
 
+# Export
+openpyxl>=3.1.0
+
 # Utilities
 tqdm>=4.65.0
